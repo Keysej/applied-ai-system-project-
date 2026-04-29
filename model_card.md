@@ -131,3 +131,19 @@ Even four weighted rules and 20 songs feel surprisingly "correct" when the profi
 
 **What I would try next:**  
 First, add a vocabulary check so the system warns when a genre or mood has no catalog matches. Second, build a "diversity mode" that intentionally puts one surprising song in every top-5. Third, connect this to a real dataset (like the Million Song Dataset or a Spotify API sample) to see whether the same simple weights still hold up at scale — or whether the catalog's composition itself was doing most of the work.
+
+---
+
+## 11. AI Collaboration — VibeFinder AI (Module 5)
+
+**How I used AI during development:**  
+Throughout the Module 5 extension, I used an AI assistant at three stages: architecture design, debugging, and writing the evaluation harness. During design, I described the silent-failure problem from Module 3 and asked for a system layout that would catch it before results were returned — that conversation shaped the decision to place guardrails before the AI parser rather than after scoring. During debugging, when the AI parser was returning genres like "acoustic folk" that didn't exist in the catalog, I used the AI to diagnose why and it correctly identified that the parser had no constraint on which genres to pick from — the fix was adding the catalog's exact vocabulary to the system prompt. During testing, I asked the AI to suggest adversarial inputs I might not have thought of, which surfaced the contradiction case (lofi + high energy) as a test scenario.
+
+**One instance where the AI suggestion was helpful:**  
+When I asked how to separate the parsing step from the explanation step, the AI suggested using two focused API calls with a deterministic scoring step in between rather than one large prompt. This was the right call: smaller focused prompts are easier to test, easier to debug, and less likely to hallucinate. That architectural suggestion became the core design of the system and directly informed how I structured the test suite — one test per layer rather than one end-to-end test.
+
+**One instance where the AI suggestion was flawed:**  
+When I asked the AI to help write the confidence scoring formula for the evaluation harness, it initially suggested dividing the top song's score by the total number of songs (20) rather than by the theoretical maximum score under the BALANCED mode. That formula would have produced confidence numbers in the range of 0.25–0.30 for any good match — making even perfect results look weak. I caught the error by manually checking: a pop/happy profile returning Sunrise City with a score of 4.96 out of a max of 5.5 should produce ~90% confidence, not 25%. I replaced the formula with `(top_score / MAX_SCORE) * 100`, which gives interpretable results.
+
+**System limitations and future improvements:**  
+The catalog has only 20 songs, which means some genre and mood combinations are guaranteed to fail — there is simply no "sad" music available. Exact string matching penalizes adjacent genres like "indie pop" vs "pop." Two AI API calls per query add 1–2 seconds of latency compared to the original instant response. Future work would expand the catalog to 200+ songs, replace string matching with embedding similarity so related genres score as adjacent, and add a feedback loop where the user can say "not happy enough" and the system re-scores with adjusted weights.

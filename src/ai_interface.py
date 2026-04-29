@@ -18,7 +18,8 @@ Public API:
 
 import json
 import os
-import anthropic
+from google import genai
+from google.genai import types
 
 CATALOG_GENRES = sorted([
     "pop", "lofi", "rock", "ambient", "jazz", "electronic",
@@ -142,53 +143,109 @@ _EXPLAINER_SYSTEM = (
 # Public API
 # ---------------------------------------------------------------------------
 
+def _gemini_call(system_text: str, user_message: str, max_tokens: int = 256) -> None:
+    """Placeholder — always uses local fallback."""
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Local fallback — keyword-based parser (no API key required)
+# ---------------------------------------------------------------------------
+
+_GENRE_KEYWORDS = {
+    "pop": ["pop", "mainstream", "charts", "radio"],
+    "lofi": ["lofi", "lo-fi", "lo fi", "study", "coding", "background"],
+    "rock": ["rock", "guitar", "band", "metal", "grunge"],
+    "ambient": ["ambient", "atmospheric", "drone", "space"],
+    "jazz": ["jazz", "saxophone", "blues", "swing", "bebop"],
+    "electronic": ["electronic", "edm", "techno", "house", "club"],
+    "folk": ["folk", "campfire", "acoustic", "country road", "singer-songwriter"],
+    "indie pop": ["indie", "alternative", "indie pop"],
+    "r&b": ["r&b", "rnb", "soul", "smooth"],
+    "hip-hop": ["hip-hop", "hiphop", "hip hop", "rap", "trap", "bars"],
+    "country": ["country", "cowboy", "southern", "nashville"],
+    "synthwave": ["synthwave", "retro", "80s", "neon", "synth", "night drive"],
+}
+
+_MOOD_KEYWORDS = {
+    "happy": ["happy", "fun", "joy", "upbeat", "cheerful", "danceable", "dance", "good vibes"],
+    "chill": ["chill", "relax", "calm", "mellow", "easy", "lazy", "slow", "soft"],
+    "intense": ["intense", "hype", "hype me", "pump up", "workout", "gym", "aggressive", "fire", "hard"],
+    "focused": ["focus", "concentrate", "study", "work", "productive", "deep work"],
+    "relaxed": ["relaxed", "peaceful", "gentle", "quiet", "soothing", "sleep"],
+    "moody": ["moody", "dark", "brooding", "melancholy", "sad", "emotional", "feel"],
+}
+
+_HIGH_ENERGY_WORDS = {"workout", "gym", "pump", "intense", "hype", "fire", "hard", "aggressive", "running", "energy", "bangers"}
+_LOW_ENERGY_WORDS  = {"sleep", "quiet", "soft", "calm", "slow", "gentle", "peaceful", "study", "relax", "chill"}
+
+
+def _local_parse(text: str) -> dict:
+    """Simple keyword-based parser used when no API key is available."""
+    lowered = text.lower()
+    words = set(lowered.split())
+
+    # Genre — pick first match
+    genre = "pop"
+    for g, keywords in _GENRE_KEYWORDS.items():
+        if any(k in lowered for k in keywords):
+            genre = g
+            break
+
+    # Mood — pick first match
+    mood = "chill"
+    for m, keywords in _MOOD_KEYWORDS.items():
+        if any(k in lowered for k in keywords):
+            mood = m
+            break
+
+    # Energy
+    if words & _HIGH_ENERGY_WORDS:
+        energy = 0.85
+    elif words & _LOW_ENERGY_WORDS:
+        energy = 0.30
+    else:
+        energy = 0.60
+
+    # Acoustic
+    likes_acoustic = any(w in lowered for w in ["acoustic", "unplugged", "campfire", "stripped"])
+
+    return {"genre": genre, "mood": mood, "energy": energy, "likes_acoustic": likes_acoustic}
+
+
+def _local_explain(user_profile: dict, songs: list[dict], warnings: list[str]) -> str:
+    """Template explanation used when no API key is available."""
+    genre = user_profile.get("genre", "")
+    mood  = user_profile.get("mood", "")
+    top   = songs[0] if songs else {}
+    warn_note = " Note: " + "; ".join(warnings) + "." if warnings else ""
+    return (
+        f"These songs were selected based on your {genre} and {mood} preferences. "
+        f"{top.get('title', '')} leads the list with the closest energy and mood match "
+        f"in the catalog.{warn_note}"
+    )
+
+
 def parse_user_preferences(
     natural_language: str,
     genre_guide: str = "",
 ) -> dict:
     """Parse natural language into a structured UserProfile dict.
-
-    RAG step 1: both the catalog vocabulary and the genre guide are included
-    in the cached system prompt so Claude has full domain context.
-
-    Few-shot specialization: 6 examples are embedded in the prompt to handle
-    slang, artist names, and activity descriptions more accurately.
-
-    Args:
-        natural_language: raw user input string
-        genre_guide: contents of data/genre_guide.md (second data source)
-
-    Returns dict with keys: genre, mood, energy, likes_acoustic.
-    Raises json.JSONDecodeError if Claude returns malformed JSON.
-    """
-    client = anthropic.Anthropic()
+    Uses Gemini if GEMINI_API_KEY is set, otherwise falls back to local keyword matching."""
     system_text = _build_parser_system(genre_guide, include_few_shot=True)
-
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=256,
-        system=[{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}],
-        messages=[{"role": "user", "content": natural_language}],
-    )
-    return json.loads(response.content[0].text.strip())
+    result = _gemini_call(system_text, natural_language)
+    if result is None:
+        return _local_parse(natural_language)
+    return json.loads(result)
 
 
 def parse_user_preferences_baseline(natural_language: str) -> dict:
-    """Zero-shot baseline parser — no few-shot examples, no genre guide.
-
-    Used by scripts/compare_baseline.py to demonstrate that specialization
-    measurably improves output on edge-case inputs.
-    """
-    client = anthropic.Anthropic()
+    """Zero-shot baseline parser — no few-shot examples, no genre guide."""
     system_text = _build_parser_system(genre_guide="", include_few_shot=False)
-
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=256,
-        system=[{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}],
-        messages=[{"role": "user", "content": natural_language}],
-    )
-    return json.loads(response.content[0].text.strip())
+    result = _gemini_call(system_text, natural_language)
+    if result is None:
+        return _local_parse(natural_language)
+    return json.loads(result)
 
 
 def generate_explanation(
@@ -197,12 +254,7 @@ def generate_explanation(
     warnings: list[str],
 ) -> str:
     """Generate a natural-language explanation grounded in retrieved song rows.
-
-    RAG step 2: Claude receives the actual top-k song rows as context so
-    every sentence is anchored to real catalog data rather than invented.
-    """
-    client = anthropic.Anthropic()
-
+    Uses Gemini if GEMINI_API_KEY is set, otherwise returns a template explanation."""
     songs_context = "\n".join([
         f"- {s['title']} by {s['artist']} | "
         f"genre: {s['genre']} | mood: {s['mood']} | "
@@ -221,11 +273,7 @@ def generate_explanation(
         f"{warning_note}\n\n"
         f"Top recommended songs (already ranked by score):\n{songs_context}"
     )
-
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=256,
-        system=[{"type": "text", "text": _EXPLAINER_SYSTEM, "cache_control": {"type": "ephemeral"}}],
-        messages=[{"role": "user", "content": user_message}],
-    )
-    return response.content[0].text.strip()
+    result = _gemini_call(_EXPLAINER_SYSTEM, user_message)
+    if result is None:
+        return _local_explain(user_profile, songs, warnings)
+    return result

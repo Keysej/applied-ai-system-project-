@@ -17,9 +17,11 @@ Every step prints a visible header so the reasoning chain is fully observable.
 """
 
 import json
+import os
 import re
 
-import anthropic
+from google import genai
+from google.genai import types
 
 from .ai_interface import generate_explanation, load_genre_guide
 from .guardrails import validate_profile
@@ -40,17 +42,40 @@ def _step_header(n: int, label: str) -> None:
     print(f"\n  ── Step {n}: {label} {pad}")
 
 
+_FALLBACK_RESPONSES = [
+    "The genre and energy level are clear; the mood could be more specific.",
+    "What energy level are you looking for — calm and low-key, or high and intense?",
+    '{"genre": "pop", "mood": "happy", "energy": 0.70, "likes_acoustic": false}',
+    None,  # Step 4 is deterministic — no AI response needed
+    "Quality: 7/10 — Results match the general vibe but mood specificity could improve.",
+    None,  # Step 6 uses generate_explanation directly
+]
+
+
 def _claude(history: list[dict], max_tokens: int = 300) -> str:
-    client = anthropic.Anthropic()
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=max_tokens,
-        system=[
-            {"type": "text", "text": _AGENT_SYSTEM, "cache_control": {"type": "ephemeral"}}
-        ],
-        messages=history,
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        # Count how many assistant turns exist to pick the right fallback
+        step = sum(1 for m in history if m["role"] == "assistant")
+        return _FALLBACK_RESPONSES[min(step, len(_FALLBACK_RESPONSES) - 1)] or ""
+    client = genai.Client(api_key=api_key)
+    gemini_history = [
+        types.Content(
+            role="model" if m["role"] == "assistant" else "user",
+            parts=[types.Part(text=m["content"])],
+        )
+        for m in history[:-1]
+    ]
+    chat = client.chats.create(
+        model="gemini-1.5-flash",
+        config=types.GenerateContentConfig(
+            system_instruction=_AGENT_SYSTEM,
+            max_output_tokens=max_tokens,
+        ),
+        history=gemini_history,
     )
-    return response.content[0].text.strip()
+    response = chat.send_message(history[-1]["content"])
+    return response.text.strip()
 
 
 def _add(history: list[dict], role: str, content: str) -> None:
