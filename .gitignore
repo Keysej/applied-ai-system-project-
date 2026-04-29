@@ -13,3 +13,7 @@ venv/
 
 # Pytest cache
 .pytest_cache/
+
+# Logs and Claude helper
+logs/session.log
+.claude-helper.log
