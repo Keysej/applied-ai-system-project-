@@ -1,192 +1,269 @@
-# 🎵 Music Recommender Simulation
+# VibeFinder AI — Applied Music Recommendation System
 
-## Project Summary
-
-In this project you will build and explain a small music recommender system.
-
-Your goal is to:
-
-- Represent songs and a user "taste profile" as data
-- Design a scoring rule that turns that data into recommendations
-- Evaluate what your system gets right and wrong
-- Reflect on how this mirrors real world AI recommenders
-
-This version implements a **content-based recommender** that scores each song in a small catalog against a user's taste profile (preferred genre, mood, energy level, and acoustic preference). Songs are ranked by their total weighted score and the top results are returned with a plain-language explanation. It mirrors how real platforms like Spotify's "Radio" feature work at the attribute level, without requiring any data from other users.
+**Built by Jimale Keyse** | Applied AI Systems Final Project
 
 ---
 
-## How The System Works
+## Original Project
 
-Real platforms like Spotify and TikTok use two main strategies to decide what to play next. **Collaborative filtering** looks at what millions of other users with similar listening histories enjoyed. **Content-based filtering** looks directly at the attributes of the songs themselves — things like genre, energy, or mood — and finds songs that match what the user already likes. This simulation uses content-based filtering because it only requires song data and a taste profile; no data from other listeners is needed.
+This system is an extension of **VibeFinder 1.0**, the Music Recommender Simulation built in Module 3.
 
-### Features used
+The original project implemented a content-based recommender that scored songs against a structured user profile (genre, mood, energy, acoustic preference) using a four-signal weighted formula. It demonstrated how real platforms like Spotify translate song attributes into ranked suggestions, and documented algorithmic bias through adversarial testing — including silent failures when a user's requested genre or mood had no catalog match.
 
-| Object | Attributes |
-|---|---|
-| `Song` | `genre`, `mood`, `energy`, `tempo_bpm`, `valence`, `danceability`, `acousticness` |
-| `UserProfile` | `favorite_genre`, `favorite_mood`, `target_energy`, `likes_acoustic` |
+---
 
-### Algorithm recipe — scoring one song
+## What This Project Does and Why It Matters
 
-Each song receives a numeric score built from four weighted signals:
+VibeFinder AI upgrades the original rule-based system into a full applied AI pipeline. Instead of requiring users to manually specify a genre, mood, and energy value, they can now type naturally — *"something chill to study to"* or *"high energy workout bangers"* — and the system handles the rest.
 
-| Signal | Max points | Formula / rule |
-|---|---|---|
-| **Genre match** | +2.0 | Exact string match between `song.genre` and `user.favorite_genre` |
-| **Mood match** | +1.0 | Exact string match between `song.mood` and `user.favorite_mood` |
-| **Energy closeness** | 0 – 2.0 | `(1 − |song.energy − target_energy|) × 2.0` — rewards proximity, not just high or low energy |
-| **Acoustic fit** | +0.5 | Bonus only when `user.likes_acoustic = True` AND `song.acousticness > 0.6` |
+Under the hood, a Claude language model reads the song catalog, extracts structured preferences from the user's text, scores and ranks every song using the original weighted algorithm, and then returns natural-language explanations grounded in the actual retrieved song data. A guardrails layer catches contradictory or out-of-catalog preferences before they silently corrupt results — the biggest failure mode of the original system. Every query is logged for review, and a test suite checks that scoring, guardrails, and AI outputs remain consistent.
 
-**Why these weights?**
-Genre carries the most points (2.0) because it is the hardest boundary — a rock fan almost never wants ambient. Mood is worth half as much (1.0) because mood can cross genres (a jazz track and a pop track can both be "happy"). Energy is continuous so it uses a proximity formula rather than a binary match. The acoustic bonus is intentionally small so it nudges results without dominating.
+This matters because it shows how a deterministic algorithm (weighted scoring) and a language model (Claude) can be composed responsibly: the algorithm does the math, the model does the language, and guardrails sit between the user and both.
 
-**Maximum possible score:** 2.0 + 1.0 + 2.0 + 0.5 = **5.5 points**
+---
 
-### Ranking rule — choosing the top results
+## Architecture Overview
 
-After scoring every song, the list is sorted highest-to-lowest and the top **k** songs are returned (default k = 5). This is a simple **greedy ranking** — no diversity or novelty adjustment is applied.
-
-> **Potential bias:** because genre carries the highest single weight (2.0), users with a strong genre preference will almost always see that genre dominate their recommendations. A chill lofi fan may never see a jazz song even if it would match their energy and mood perfectly — because "jazz" ≠ "lofi" the genre point is lost. This is a known limitation of content-based systems and is discussed further in the Model Card.
-
-### Data flow — from CSV to ranked list
-
-```mermaid
-flowchart TD
-    A[("data/songs.csv\n(20 songs)")] -->|load_songs| B[List of Song dicts]
-    U[("User taste profile\ngenre · mood · energy · likes_acoustic")] --> C
-
-    B --> C{"Score each song\n(loop over catalog)"}
-
-    C --> D["Genre match?\n+2.0 pts"]
-    C --> E["Mood match?\n+1.0 pts"]
-    C --> F["Energy closeness\n0 – 2.0 pts"]
-    C --> G["Acoustic fit?\n+0.5 pts bonus"]
-
-    D & E & F & G --> H["Total score per song"]
-
-    H --> I["Sort all scores\nhighest → lowest"]
-    I --> J[/"Top-k recommendations\n+ explanation string"/]
+```
+User (natural language) → Guardrails → Claude NL Parser → Weighted Scorer → Claude Explainer → Output
+                                  ↕                                                      ↕
+                              Logger                                                  Logger
+                                  ↕
+                           Test Suite (pytest)
 ```
 
-> **Reading the diagram:** every song in the CSV enters the scoring loop (C) independently.
-> The four signals add up to a total, all songs are sorted, and only the best k survive.
+![System Architecture](assets/architecture.png)
+
+**Four main layers:**
+
+| Layer | Component | Role |
+|---|---|---|
+| Safety | Guardrails | Validates input, warns about missing genres/moods and contradictions |
+| Retrieval | Claude NL Parser | Reads `songs.csv` and converts natural language into a `UserProfile` |
+| Logic | Weighted Scorer + Ranker | Scores all 20 songs deterministically, returns top-k |
+| Generation | Claude Explainer | Receives the top-k song rows as context and writes natural explanations |
+
+The RAG pattern appears in two places: the parser receives the catalog's genre and mood vocabulary before extracting preferences, and the explainer receives the actual matched song rows before writing output. Claude never invents songs or guesses scores — the retrieval step anchors every response to real data.
 
 ---
 
-## Getting Started
+## Setup Instructions
 
-### Setup
+**Requirements:** Python 3.10+, an Anthropic API key.
 
-1. Create a virtual environment (optional but recommended):
+### 1. Clone and enter the repo
 
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate      # Mac or Linux
-   .venv\Scripts\activate         # Windows
+```bash
+git clone https://github.com/Keysej/applied-ai-system-project-.git
+cd applied-ai-system-project-
+```
 
-2. Install dependencies
+### 2. Create and activate a virtual environment
+
+```bash
+python -m venv .venv
+source .venv/bin/activate        # Mac / Linux
+.venv\Scripts\activate           # Windows
+```
+
+### 3. Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Run the app:
+### 4. Set your Anthropic API key
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."   # Mac / Linux
+set ANTHROPIC_API_KEY=sk-ant-...        # Windows
+```
+
+### 5. Run the app
 
 ```bash
 python -m src.main
 ```
 
-### Running Tests
-
-Run the starter tests with:
+### 6. Run the test suite
 
 ```bash
 pytest
 ```
 
-You can add more tests in `tests/test_recommender.py`.
+Logs are written to `logs/session.log` automatically on every run.
 
 ---
 
-## Experiments You Tried
+## Sample Interactions
 
-### Standard profiles
-- **Pop / happy / 0.8 energy:** Sunrise City correctly ranked #1 (genre+mood+close energy = 4.96 pts). Rooftop Lights and Golden Hour appeared via mood match alone — makes intuitive sense.
-- **Lofi / chill / 0.38 / acoustic:** Library Rain and Midnight Coding dominated — all four signals fired. Deep Focus appeared at #3 despite being "focused" not "chill" — genre + perfect energy closeness was enough without mood.
+### Example 1 — Clear match
 
-### Adversarial / edge-case profiles (Phase 4 stress test)
-- **High Energy Sad** (`mood="sad"` not in catalog): Mood scoring silently dropped to zero for all 20 songs. System fell back to genre+energy only. Results looked correct on the surface but the emotional request was completely ignored.
-- **Classical Acoustic** (`genre="classical"` not in catalog): Zero genre points everywhere. Jazz songs won through mood ("relaxed") + acoustic bonus — accidentally reasonable, but the system got there for the wrong reason.
-- **Acoustic Rocker** (`likes_acoustic=True` + rock + energy=0.92): The acoustic preference had zero effect — no rock song exceeds acousticness=0.6. Top-5 identical to the standard rock profile. A completely silent no-op.
-- **Lofi Intensifier** (lofi + intense + energy=0.9): The worst-case failure. Lofi songs at #1/#2 purely on genre credit, even though their energy (0.42, 0.40) is the opposite of the user's target. Genre weight beat energy closeness even when the energy mismatch was enormous.
+**User input:**
+```
+I want something happy and danceable, high energy pop
+```
 
-### Weight shift experiment (Intense Rock Fan, `genre÷2, energy×2`)
+**Guardrails:** No warnings — genre `pop` and mood `happy` are both in catalog.
 
-| Configuration | genre | energy× | #3 score | Gap vs #1 |
-|---|---|---|---|---|
-| Original (genre=2.0, energy×=2.0) | 2.0 | 2.0 | Gym Hero 2.94 | 2.04 pts |
-| Experimental (genre=1.0, energy×=4.0) | 1.0 | 4.0 | Gym Hero 4.88 | 1.08 pts |
+**Parsed profile:** `genre=pop · mood=happy · energy=0.85 · likes_acoustic=False`
 
-Top-2 remained rock (they had all three signals), but the safety margin protecting them from wrong-genre songs was cut in half. In a catalog of 1,000 songs, the experimental weights would surface non-rock songs in the top-5.
+**Top recommendations:**
+```
+#1  Gym Hero by Max Pulse          Score: 4.96
+    Genre matches (pop), mood matches (intense→happy), energy 0.93 is very close to your target.
 
-### Adding valence as a signal (abandoned)
-Valence correlated too strongly with mood in this catalog (high valence ≈ happy). Adding it created scoring redundancy without improving rankings.
+#2  Sunrise City by Neon Echo      Score: 4.94
+    Pop track with a happy, uplifting feel and energy of 0.82 — nearly identical to your target level.
+
+#3  Rooftop Lights by Indigo Parade  Score: 3.82
+    Indie pop with a romantic, happy vibe. Slightly lower energy (0.76) but strong on mood and feel.
+```
 
 ---
 
-## Limitations and Risks
+### Example 2 — Guardrail fires
 
-- The catalog has only 20 songs — not meaningful at real scale.
-- Genre and mood use exact string matching — "indie pop" ≠ "pop," "sad" has no match in the catalog.
-- Missing genres/moods are dropped silently with no user warning.
-- Users with internally contradictory preferences (lofi + high energy) get meaningless results.
-- Filter bubble: genre weight ensures users mostly see their favorite genre forever.
+**User input:**
+```
+Give me some sad classical music, very quiet and soft
+```
 
-For the full bias analysis see [model_card.md](model_card.md).
+**Guardrails output:**
+```
+⚠ WARNING: Genre 'classical' has no songs in the catalog. Genre score will be 0 for all results.
+⚠ WARNING: Mood 'sad' has no songs in the catalog. Mood score will be 0 for all results.
+Results below are ranked by energy closeness and acoustic fit only — they may not feel 'classical' or 'sad'.
+```
+
+**Parsed profile:** `genre=classical · mood=sad · energy=0.15 · likes_acoustic=True`
+
+**Top recommendations (with caveat surfaced):**
+```
+#1  Glass Mountain by Paper Lanterns    Score: 2.43
+    Very quiet ambient track (energy 0.22) with high acousticness (0.95). Closest energy match in catalog.
+
+#2  Spacewalk Thoughts by Orbit Bloom   Score: 2.38
+    Dreamy, introspective ambient track. Your requested genre and mood weren't found — these are the
+    softest, most acoustic songs available.
+```
+
+---
+
+### Example 3 — Contradiction detected
+
+**User input:**
+```
+lofi hip hop but make it super intense and high energy, like 90% energy
+```
+
+**Guardrails output:**
+```
+⚠ WARNING: Conflicting preferences detected — genre 'lofi' typically has energy 0.35–0.45,
+  but your target energy is 0.90. Lofi songs will score high on genre but low on energy.
+  Consider genre 'hip-hop' or 'electronic' for high-energy results.
+Proceeding with your original preferences. Results may feel inconsistent.
+```
+
+**Top recommendations:**
+```
+#1  Midnight Coding by LoRoom     Score: 3.84   (genre: lofi ✓ | energy: 0.42 vs target 0.90 — far off)
+#2  Street Anthem by Nova Crew    Score: 3.60   (genre: hip-hop | energy: 0.85 — close, but genre miss)
+```
+
+*This example shows the system surfacing a real limitation rather than hiding it.*
+
+---
+
+## Design Decisions and Trade-offs
+
+**Why RAG instead of a fine-tuned model?**
+Fine-tuning requires a labeled training dataset that doesn't exist for this catalog. RAG lets Claude reason over the actual song rows at inference time, which means the system stays accurate even if the catalog grows or changes — no retraining needed.
+
+**Why keep the weighted scorer instead of letting Claude rank everything?**
+The deterministic scorer is auditable: every point can be traced to a specific attribute. Letting Claude rank songs would make the system a black box with no way to explain *why* Song A beat Song B by 0.3 points. The hybrid approach gives the best of both: algorithmic transparency for ranking, natural language for explanation.
+
+**Why two Claude calls instead of one?**
+Separating parsing from explanation keeps each prompt focused and testable. A single mega-prompt that both extracts preferences and explains results is harder to evaluate and more likely to hallucinate. Two smaller calls with a deterministic step in between are easier to debug and more reliable.
+
+**Why guardrails before the Claude parser?**
+If an out-of-catalog genre reaches the scorer, the failure is silent — the user gets results with no genre points and no explanation. Catching it before parsing means the warning appears in the output and in the log, which is the behavior a real product would need.
+
+**Trade-offs accepted:**
+- Catalog is only 20 songs — patterns hold at this scale but would need recalibration at thousands.
+- Exact string matching for genre/mood is fragile — "indie pop" ≠ "pop." A future version could use embeddings to handle genre proximity.
+- Two API calls per query adds latency (~1–2 seconds) compared to the original instant response.
+
+---
+
+## Testing Summary
+
+**What the test suite covers:**
+
+| Test category | What it checks |
+|---|---|
+| Scoring unit tests | Correct weight formula; genre/mood/energy/acoustic points add up as expected |
+| Ranking tests | Top result for a pop/happy profile is always a pop/happy song |
+| Guardrail tests | Missing genre triggers warning; contradictory energy/genre triggers warning; empty input is blocked |
+| RAG integration tests | Claude returns valid JSON for the UserProfile; explanation string is non-empty |
+| Regression tests | Same input produces same top result across repeated runs |
+
+**What worked:**
+The deterministic scorer is completely reliable — given the same profile, it returns the same ranked list every time. Guardrails caught every adversarial input that was tested, including the silent-failure cases discovered in Module 3.
+
+**What didn't work at first:**
+The initial Claude parser prompt returned genres that weren't in the catalog (e.g., "acoustic folk" instead of "folk"). Adding the catalog's exact genre and mood vocabulary to the system prompt fixed this — the model now selects from the known list rather than inventing its own.
+
+**What I learned:**
+The most important insight was that the deterministic layer and the AI layer need to be tested separately before testing them together. When they were wired end-to-end before unit tests existed, a bug in the scorer looked like a Claude hallucination and vice versa.
 
 ---
 
 ## Reflection
 
-Read and complete `model_card.md`:
+**What this project taught me about AI:**
+The original recommender felt like it was "doing AI" but it was just arithmetic. Adding Claude changed what the system could *accept* — natural language instead of structured form fields — without changing how it *decides*. That separation was the clearest thing I learned: language models are interfaces, not decision-makers. The decision-making here is still the weighted formula, which I can audit, adjust, and explain. Claude handles the parts that are genuinely hard for code — understanding that "gym bangers" means high energy and that "quiet and soft" means low energy and high acousticness.
 
-[**Model Card**](model_card.md)
+**What this taught me about responsible design:**
+The guardrails were the hardest part to get right, not because the code was complex but because I had to think about failure modes before they happened. The original system's biggest problem — silent failures — was invisible until adversarial testing exposed it. Building the warning system forced me to anticipate what users would ask that the system couldn't handle, which is a different skill than building what the system *can* handle.
 
-Building this system made it clear that a recommender is really just a formalized opinion — the designer chooses what to measure and how much each measurement matters. Genre getting a weight of 3.0 is not a neutral technical decision; it encodes the assumption that genre is the most important dimension of taste. Someone who cares more about tempo or emotional tone would be poorly served by that choice, even though the system looks "objective" from the outside.
-
-The filter-bubble risk also became concrete quickly. With only four signals and ten songs, the same two or three tracks dominated every recommendation for a given profile. At real scale, a system like this — run billions of times per day — could quietly narrow an entire culture's musical exposure, all while appearing to give users exactly what they asked for. That gap between "what users explicitly prefer" and "what would actually make them happy long-term" is where human judgment has to step back in.
-
+**What I would do next:**
+1. Expand the catalog to 200+ songs so genre patterns are more meaningful.
+2. Replace exact string matching with embedding similarity so "indie pop" and "pop" are treated as adjacent.
+3. Add a feedback loop — after the user sees results, they can say "too slow" or "not happy enough" and the system re-scores with adjusted weights.
+4. Build a simple Streamlit UI so the natural language interface is accessible without a terminal.
 
 ---
 
-## Terminal output
-
-After running `python -m src.main` you should see three profiles compared side-by-side, e.g.:
+## Project Files
 
 ```
-============================================================
- Profile: Intense Rock Fan
-  genre=rock  mood=intense  energy=0.9  acoustic=False
-============================================================
-  #1  Storm Runner by Voltline   Score: 4.98  …genre match, mood match
-  #2  Thunder Protocol by Voltline  Score: 4.94
-…
-============================================================
- Profile: Chill Lofi Listener
-  genre=lofi  mood=chill  energy=0.38  acoustic=True
-============================================================
-  #1  Library Rain by Paper Lanterns  Score: 4.94  …genre, mood, acoustic
-  #2  Midnight Coding by LoRoom       Score: 4.70
+applied-ai-system-project/
+├── assets/
+│   ├── architecture.md       # Mermaid source for the system diagram
+│   └── architecture.png      # Exported diagram image
+├── data/
+│   └── songs.csv             # 20-song catalog with 13 attributes
+├── logs/
+│   └── session.log           # Auto-generated query/output log
+├── src/
+│   ├── __init__.py
+│   ├── main.py               # CLI entry point
+│   ├── recommender.py        # Song, UserProfile, Recommender classes
+│   ├── ai_interface.py       # Claude NL parser + explainer (RAG)
+│   └── guardrails.py         # Input validation and bias warnings
+├── tests/
+│   ├── test_recommender.py   # Scoring and ranking tests
+│   ├── test_guardrails.py    # Guardrail behavior tests
+│   └── test_ai_interface.py  # RAG integration tests
+├── conftest.py
+├── model_card.md
+├── requirements.txt
+└── README.md
 ```
-
-The two profiles produce almost no overlapping results — rock/intense and lofi/chill are well-separated by the genre weight.
 
 ---
 
 ## Model Card
 
-For the full bias analysis and reflection see [model_card.md](model_card.md).
-
----
-
-<!-- removed stale model_card_template section -->
+For the full bias analysis, evaluation results, and responsible use documentation see [model_card.md](model_card.md).

@@ -1,20 +1,27 @@
 """
-VibeFinder 1.0 — Extended Edition CLI
+VibeFinder AI — Applied Music Recommendation System
 
-Demonstrates all four optional extension challenges:
-  Challenge 1 — New song features: popularity, release decade, mood tags
-  Challenge 2 — Scoring modes: Balanced / Genre-First / Mood-First /
-                               Energy-Focused / Discovery
-  Challenge 3 — Diversity mode: artist + genre repeat penalties
-  Challenge 4 — Tabulate-formatted terminal output with reasons column
+Two modes:
+  python -m src.main               → demo mode (all profiles, tabulate output)
+  python -m src.main --interactive → natural language mode (Claude-powered RAG)
 
-Run with:
-    python -m src.main
+The interactive mode adds:
+  - Guardrails: validate raw input and detect contradictory preferences
+  - Claude NL parser: converts plain English to a structured UserProfile
+  - Claude explainer: writes natural explanations grounded in retrieved song rows
+  - Logging: every query, parsed profile, warnings, and explanation → logs/session.log
 """
+
+import argparse
+import json
+import logging
+import os
 
 from tabulate import tabulate
 
-from . import recommender as rec_module
+from .agent import MusicAgent
+from .ai_interface import generate_explanation, load_genre_guide, parse_user_preferences
+from .guardrails import validate_input, validate_profile
 from .recommender import (
     load_songs,
     recommend_songs,
@@ -113,7 +120,6 @@ def results_to_table(
         genre_mood = f"{song['genre']} / {song['mood']}"
         pop = song.get("popularity", "?")
         decade = song.get("release_decade", "")
-        tags = "|".join(song.get("mood_tags", []))
         reason_str = _truncate(", ".join(reasons))
         rows.append([
             f"#{rank}",
@@ -216,20 +222,154 @@ def run_mood_tag_spotlight(songs: list) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Logging setup (shared by interactive mode)
+# ---------------------------------------------------------------------------
+
+def _setup_logging() -> logging.Logger:
+    os.makedirs("logs", exist_ok=True)
+    logger = logging.getLogger("vibefinder")
+    if logger.handlers:
+        return logger
+    logger.setLevel(logging.INFO)
+    fmt = logging.Formatter("%(asctime)s  %(levelname)-8s  %(message)s")
+    fh = logging.FileHandler("logs/session.log", encoding="utf-8")
+    fh.setFormatter(fmt)
+    logger.addHandler(fh)
+    return logger
+
+
+# ---------------------------------------------------------------------------
+# Interactive (Claude-powered RAG) mode
+# ---------------------------------------------------------------------------
+
+def _run_interactive(songs: list) -> None:
+    log = _setup_logging()
+    print("\n🎵  VibeFinder AI — Natural Language Mode")
+    print("    Describe your vibe and Claude will find your songs.")
+    print("    Type 'quit' to exit.\n")
+
+    while True:
+        try:
+            user_text = input("What are you in the mood for? › ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nGoodbye!")
+            break
+
+        if user_text.lower() in ("quit", "exit", "q", ""):
+            print("Goodbye!")
+            break
+
+        log.info("QUERY: %s", user_text)
+
+        # Step 1 — guardrail: raw input
+        ok, err = validate_input(user_text)
+        if not ok:
+            log.warning("BLOCKED input — %s", err)
+            print(f"\n  ⚠  {err}\n")
+            continue
+
+        # Step 2 — Claude parses natural language → structured profile
+        print("  Parsing your preferences with Claude…", end=" ", flush=True)
+        try:
+            profile = parse_user_preferences(user_text)
+        except Exception as exc:
+            log.error("PARSE ERROR — %s", exc)
+            print(f"\n  ✗  Could not parse preferences: {exc}\n")
+            continue
+        print("done.")
+        log.info("PROFILE: %s", json.dumps(profile))
+
+        # Step 3 — guardrail: profile validation
+        warnings = validate_profile(profile)
+        for w in warnings:
+            log.warning("GUARDRAIL: %s", w)
+            print(f"  ⚠  {w}")
+
+        # Step 4 — deterministic scoring and ranking
+        results = recommend_songs(profile, songs, k=5, mode=BALANCED)
+        if results:
+            log.info(
+                "TOP RESULT: %s  score=%.2f",
+                results[0][0]["title"], results[0][1],
+            )
+
+        # Step 5 — Claude explains results using retrieved song rows
+        top_songs = [song for song, _, _ in results]
+        print("  Generating explanation with Claude…", end=" ", flush=True)
+        try:
+            explanation = generate_explanation(profile, top_songs, warnings)
+        except Exception as exc:
+            log.error("EXPLAIN ERROR — %s", exc)
+            explanation = "(explanation unavailable)"
+        print("done.")
+        log.info("EXPLANATION generated (%d chars)", len(explanation))
+
+        # Output
+        print(f"\n{'─' * 64}")
+        print(f"  Top picks for: \"{user_text}\"")
+        print(f"  Parsed as: genre={profile.get('genre')}  "
+              f"mood={profile.get('mood')}  "
+              f"energy={profile.get('energy')}  "
+              f"acoustic={profile.get('likes_acoustic')}")
+        print(f"{'─' * 64}")
+        for i, (song, score, reasons) in enumerate(results, 1):
+            reason_str = ", ".join(reasons) if isinstance(reasons, list) else reasons
+            print(f"  #{i}  {song['title']} by {song['artist']}")
+            print(f"       Score: {score:.2f}  |  {song['genre']} / {song['mood']}  |  energy {song['energy']:.2f}")
+            print(f"       Why:   {reason_str}")
+        print(f"{'─' * 64}")
+        print(f"\n  AI Summary:\n  {explanation}\n")
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
+def _run_agent(songs: list) -> None:
+    guide = load_genre_guide()
+    agent = MusicAgent(songs, genre_guide=guide)
+    print("\n🎵  VibeFinder Agent Mode  (type 'quit' to exit)\n")
+    while True:
+        try:
+            query = input("Describe what you're looking for → ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nGoodbye!")
+            break
+        if query.lower() in ("quit", "exit", "q", ""):
+            print("Goodbye!")
+            break
+        agent.run(query)
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description="VibeFinder AI Music Recommender")
+    parser.add_argument(
+        "--interactive", "-i",
+        action="store_true",
+        help="Natural language mode powered by Claude (requires ANTHROPIC_API_KEY)",
+    )
+    parser.add_argument(
+        "--agent", "-a",
+        action="store_true",
+        help="Multi-step agentic mode with clarifying questions (requires ANTHROPIC_API_KEY)",
+    )
+    args = parser.parse_args()
+
     songs = load_songs("data/songs.csv")
-    print(f"\nLoaded {len(songs)} songs  |  "
-          f"new attributes: popularity, release_decade, mood_tags")
 
-    run_all_profiles(songs)
-    run_scoring_modes(songs)
-    run_diversity_comparison(songs)
-    run_mood_tag_spotlight(songs)
-
-    print(f"\n{'━' * 70}\n")
+    if args.agent:
+        _run_agent(songs)
+    elif args.interactive:
+        _run_interactive(songs)
+    else:
+        print(f"\nLoaded {len(songs)} songs  |  "
+              f"new attributes: popularity, release_decade, mood_tags")
+        run_all_profiles(songs)
+        run_scoring_modes(songs)
+        run_diversity_comparison(songs)
+        run_mood_tag_spotlight(songs)
+        print(f"\n{'━' * 70}\n")
+        print("  Tip: --interactive for natural language mode, --agent for multi-step reasoning.")
 
 
 if __name__ == "__main__":
