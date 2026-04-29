@@ -240,27 +240,46 @@ The guardrails were the hardest part to get right, not because the code was comp
 ```
 applied-ai-system-project/
 ├── assets/
-│   ├── architecture.md       # Mermaid source for the system diagram
-│   └── architecture.png      # Exported diagram image
+│   ├── architecture.md            # Mermaid source for the system diagram
+│   ├── architecture.png           # Exported diagram image
+│   ├── presentation_script.md     # Slide-by-slide speaker notes
+│   └── full_presentation_script.md # Word-for-word 7-minute script
 ├── data/
-│   └── songs.csv             # 20-song catalog with 13 attributes
+│   ├── songs.csv                  # 20-song catalog with 13 attributes
+│   └── genre_guide.md             # Second RAG data source (slang, artists, activities)
 ├── logs/
-│   └── session.log           # Auto-generated query/output log
+│   └── session.log                # Auto-generated query/output log
+├── scripts/
+│   ├── eval_harness.py            # Evaluation harness — 10 test cases, confidence scores
+│   └── compare_baseline.py        # Specialization proof — baseline vs few-shot comparison
 ├── src/
 │   ├── __init__.py
-│   ├── main.py               # CLI entry point
-│   ├── recommender.py        # Song, UserProfile, Recommender classes
-│   ├── ai_interface.py       # Claude NL parser + explainer (RAG)
-│   └── guardrails.py         # Input validation and bias warnings
+│   ├── main.py                    # CLI entry point (--interactive, --agent flags)
+│   ├── recommender.py             # Song, UserProfile, Recommender, scoring modes
+│   ├── ai_interface.py            # Claude NL parser + explainer + baseline (RAG)
+│   ├── guardrails.py              # Input validation and bias warnings
+│   └── agent.py                   # 6-step agentic workflow
 ├── tests/
-│   ├── test_recommender.py   # Scoring and ranking tests
-│   ├── test_guardrails.py    # Guardrail behavior tests
-│   └── test_ai_interface.py  # RAG integration tests
+│   ├── test_recommender.py        # Scoring, ranking, and diversity tests
+│   ├── test_guardrails.py         # Guardrail behavior tests
+│   └── test_ai_interface.py       # RAG integration tests (mocked)
 ├── conftest.py
 ├── model_card.md
 ├── requirements.txt
 └── README.md
 ```
+
+---
+
+## Portfolio Artifact
+
+**GitHub Repository:** [github.com/Keysej/applied-ai-system-project-](https://github.com/Keysej/applied-ai-system-project-)
+
+**Loom Walkthrough:** *(add your Loom link here after recording)*
+
+**What this project says about me as an AI engineer:**
+
+I build systems I can explain. Every design decision in VibeFinder AI — keeping the deterministic scorer separate from Claude, running guardrails before the AI layer, testing each component in isolation — came from a single principle: if I can't trace why the system did what it did, it isn't finished. This project taught me that responsible AI engineering is less about choosing the most powerful model and more about knowing exactly where the model's job ends and the algorithm's job begins. I'm drawn to the boundary between language and logic, and I want to keep building things that sit right at that line.
 
 ---
 
